@@ -1,0 +1,9 @@
+{
+  "name": "Inventura",
+  "short_name": "Inventura",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f9fafb",
+  "theme_color": "#2563eb",
+  "icons": []
+}
