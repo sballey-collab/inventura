@@ -51,13 +51,13 @@ export default function SkenirajPage() {
     if (data && data.length === 1) setSelectedSession(data[0])
   }
 
-  async function startScanner() {
+ async function startScanner() {
     if (!selectedSession) {
       showMessage('Odaberi sesiju prije skeniranja', 'error')
       return
     }
 
-    isProcessingRef.current = false // resetiraj zastavicu
+    isProcessingRef.current = false // uvijek resetiraj prije novog skena
     setScanning(true)
 
     const reader = new BrowserMultiFormatReader()
@@ -73,17 +73,19 @@ export default function SkenirajPage() {
 
       await reader.decodeFromVideoDevice(deviceId, videoRef.current!, async (result) => {
         if (!result) return
-        if (isProcessingRef.current) return // već obrađujemo, ignoriraj
-        isProcessingRef.current = true // zaključaj odmah
+        if (isProcessingRef.current) return // blokiraj duplikate
+        isProcessingRef.current = true
 
-        // zaustavi čitač
-        try {
+        const barcode = result.getText()
+
+        // cleanup NAKON što smo uzeli barcode
+        if (readerRef.current) {
           BrowserMultiFormatReader.releaseAllStreams()
           readerRef.current = null
-        } catch {}
+        }
         setScanning(false)
 
-        await processBarcode(result.getText())
+        await processBarcode(barcode)
       })
     } catch (err: any) {
       if (err?.name === 'NotAllowedError') {
