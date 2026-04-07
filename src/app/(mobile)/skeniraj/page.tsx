@@ -18,10 +18,14 @@ export default function SkenirajPage() {
   const [messageType, setMessageType] = useState<'ok' | 'error'>('ok')
   const [userId, setUserId] = useState<string>('')
   const [recentScans, setRecentScans] = useState<any[]>([])
+  const [editQty, setEditQty] = useState<number | null>(null)
   const [editingItem, setEditingItem] = useState<any | null>(null)
-  const [editQty, setEditQty] = useState<number>(0)
+  const [editingItemQty, setEditingItemQty] = useState<number>(0)
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
+  const isProcessingRef = useRef(false) // ključna zastavica
+
   const supabase = createClient()
 
   useEffect(() => {
@@ -52,10 +56,12 @@ export default function SkenirajPage() {
       showMessage('Odaberi sesiju prije skeniranja', 'error')
       return
     }
+
+    isProcessingRef.current = false // resetiraj zastavicu
     setScanning(true)
+
     const reader = new BrowserMultiFormatReader()
     readerRef.current = reader
-    const processed = { done: false } // lokalna zastavica
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -67,9 +73,16 @@ export default function SkenirajPage() {
 
       await reader.decodeFromVideoDevice(deviceId, videoRef.current!, async (result) => {
         if (!result) return
-        if (processed.done) return // ako je već obrađeno, ignoriraj
-        processed.done = true      // blokiraj sve daljnje okidače
-        stopScanner()
+        if (isProcessingRef.current) return // već obrađujemo, ignoriraj
+        isProcessingRef.current = true // zaključaj odmah
+
+        // zaustavi čitač
+        try {
+          BrowserMultiFormatReader.releaseAllStreams()
+          readerRef.current = null
+        } catch {}
+        setScanning(false)
+
         await processBarcode(result.getText())
       })
     } catch (err: any) {
@@ -83,10 +96,10 @@ export default function SkenirajPage() {
   }
 
   function stopScanner() {
-    if (readerRef.current) {
+    try {
       BrowserMultiFormatReader.releaseAllStreams()
       readerRef.current = null
-    }
+    } catch {}
     setScanning(false)
   }
 
@@ -161,6 +174,7 @@ export default function SkenirajPage() {
     setLastProduct(product)
     setLastQty(counted)
     setLastBbm(bbm)
+    setEditQty(null)
     showMessage(`✓ ${product.name} → ${counted} kom`, 'ok')
 
     setRecentScans(prev => {
@@ -175,18 +189,36 @@ export default function SkenirajPage() {
     })
   }
 
-  function openEdit(item: any) {
-    setEditingItem(item)
-    setEditQty(item.qty)
+  async function saveInlineEdit() {
+    if (editQty === null || editQty === lastQty || !lastProduct || !selectedSession) return
+    const delta = editQty - lastQty
+
+    const { error } = await supabase.rpc('increment_count', {
+      p_session_id: selectedSession.id,
+      p_product_id: lastProduct.id,
+      p_user_id: userId,
+      p_delta: delta,
+    })
+
+    if (error) { showMessage('Greška pri ispravku', 'error'); return }
+
+    setLastQty(editQty)
+    setRecentScans(prev => prev.map(s =>
+      s.product_id === lastProduct.id ? { ...s, qty: editQty } : s
+    ))
+    setEditQty(null)
+    showMessage('Količina ispravljena', 'ok')
   }
 
-  async function saveEdit() {
+  function openEditModal(item: any) {
+    setEditingItem(item)
+    setEditingItemQty(item.qty)
+  }
+
+  async function saveEditModal() {
     if (!editingItem || !selectedSession) return
-    const delta = editQty - editingItem.qty
-    if (delta === 0) {
-      setEditingItem(null)
-      return
-    }
+    const delta = editingItemQty - editingItem.qty
+    if (delta === 0) { setEditingItem(null); return }
 
     const { error } = await supabase.rpc('increment_count', {
       p_session_id: selectedSession.id,
@@ -195,20 +227,13 @@ export default function SkenirajPage() {
       p_delta: delta,
     })
 
-    if (error) {
-      showMessage('Greška pri ispravku', 'error')
-      return
-    }
+    if (error) { showMessage('Greška pri ispravku', 'error'); return }
 
     setRecentScans(prev => prev.map(s =>
-      s.product_id === editingItem.product_id ? { ...s, qty: editQty } : s
+      s.product_id === editingItem.product_id ? { ...s, qty: editingItemQty } : s
     ))
-
-    if (lastProduct?.id === editingItem.product_id) {
-      setLastQty(editQty)
-    }
-
-    showMessage(`Ispravljeno: ${editingItem.name} → ${editQty} kom`, 'ok')
+    if (lastProduct?.id === editingItem.product_id) setLastQty(editingItemQty)
+    showMessage(`Ispravljeno: ${editingItem.name} → ${editingItemQty} kom`, 'ok')
     setEditingItem(null)
   }
 
@@ -247,7 +272,9 @@ export default function SkenirajPage() {
         <div>
           <h1 className="text-lg font-semibold text-white">📦 Skeniranje</h1>
           {selectedSession && (
-            <p className="text-blue-100 text-xs">{selectedSession.name} · {(selectedSession.warehouses as any)?.name}</p>
+            <p className="text-blue-100 text-xs">
+              {selectedSession.name} · {(selectedSession.warehouses as any)?.name}
+            </p>
           )}
         </div>
         <button onClick={handleLogout} className="text-blue-100 text-sm">Odjava</button>
@@ -284,18 +311,28 @@ export default function SkenirajPage() {
           </div>
         )}
 
-        {/* Kamera / Skeniraj gumb */}
+        {/* Kamera */}
         {selectedSession && (
           <div className="bg-white rounded-2xl p-4 border border-gray-100">
             {scanning ? (
               <div className="space-y-3">
-                <video ref={videoRef} className="w-full rounded-xl" style={{ height: 220, objectFit: 'cover' }} />
-                <button onClick={stopScanner} className="w-full bg-red-500 text-white rounded-xl py-3 font-medium">
+                <video
+                  ref={videoRef}
+                  className="w-full rounded-xl"
+                  style={{ height: 220, objectFit: 'cover' }}
+                />
+                <button
+                  onClick={stopScanner}
+                  className="w-full bg-red-500 text-white rounded-xl py-3 font-medium"
+                >
                   ⏹ Odustani
                 </button>
               </div>
             ) : (
-              <button onClick={startScanner} className="w-full bg-blue-600 text-white rounded-xl py-5 text-xl font-bold">
+              <button
+                onClick={startScanner}
+                className="w-full bg-blue-600 text-white rounded-xl py-5 text-xl font-bold"
+              >
                 📷 Skeniraj
               </button>
             )}
@@ -313,7 +350,7 @@ export default function SkenirajPage() {
           </div>
         )}
 
-        {/* Zadnje skenirano + Skeniraj sljedeći */}
+        {/* Zadnje skenirano */}
         {lastProduct && selectedSession && !scanning && (
           <div className="bg-white rounded-2xl p-4 border border-gray-100">
             <p className="text-xs text-gray-400 mb-1">Zadnje skenirano</p>
@@ -332,16 +369,18 @@ export default function SkenirajPage() {
               <div className="bg-gray-50 rounded-xl p-3 text-center">
                 <p className="text-xs text-gray-400 mb-1">Razlika</p>
                 <p className={`text-2xl font-bold ${diffColor(lastQty, lastBbm)}`}>
-                  {lastBbm !== null ? (lastQty - lastBbm > 0 ? '+' : '') + (lastQty - lastBbm) : '—'}
+                  {lastBbm !== null
+                    ? (lastQty - lastBbm > 0 ? '+' : '') + (lastQty - lastBbm)
+                    : '—'}
                 </p>
               </div>
             </div>
 
-           <div className={`mb-4 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
+            <div className={`mb-4 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
               {diffLabel(lastQty, lastBbm)}
             </div>
 
-            {/* Edit količine — inline, odmah ispod */}
+            {/* Inline edit količine */}
             <div className="border-t border-gray-100 pt-3 mb-3">
               <label className="block text-sm font-medium text-gray-600 mb-2">Ispravi brojano</label>
               <div className="flex gap-2">
@@ -349,28 +388,11 @@ export default function SkenirajPage() {
                   type="number"
                   value={editQty ?? lastQty}
                   onChange={e => setEditQty(Number(e.target.value))}
-                  onFocus={() => { if (editQty === null) setEditQty(lastQty) }}
                   className="w-24 border border-gray-200 rounded-xl px-3 py-2 text-gray-800 text-center text-lg font-bold"
                   min={0}
                 />
                 <button
-                  onClick={async () => {
-                    if (editQty === null || editQty === lastQty || !lastProduct || !selectedSession) return
-                    const delta = editQty - lastQty
-                    const { error } = await supabase.rpc('increment_count', {
-                      p_session_id: selectedSession.id,
-                      p_product_id: lastProduct.id,
-                      p_user_id: userId,
-                      p_delta: delta,
-                    })
-                    if (error) { showMessage('Greška pri ispravku', 'error'); return }
-                    setLastQty(editQty)
-                    setRecentScans(prev => prev.map(s =>
-                      s.product_id === lastProduct.id ? { ...s, qty: editQty } : s
-                    ))
-                    setEditQty(null)
-                    showMessage('Količina ispravljena', 'ok')
-                  }}
+                  onClick={saveInlineEdit}
                   className="flex-1 bg-blue-600 text-white rounded-xl px-4 py-2 font-medium"
                 >
                   Spremi ispravak
@@ -378,6 +400,7 @@ export default function SkenirajPage() {
               </div>
             </div>
 
+            {/* Skeniraj sljedeći */}
             <button
               onClick={startScanner}
               className="w-full bg-green-500 text-white rounded-xl py-4 text-lg font-bold"
@@ -407,19 +430,23 @@ export default function SkenirajPage() {
                 className="w-20 border border-gray-200 rounded-xl px-3 py-2 text-gray-800 text-center"
                 min={1}
               />
-              <button onClick={handleManualInput} className="bg-blue-600 text-white rounded-xl px-4 py-2 font-medium">
+              <button
+                onClick={handleManualInput}
+                className="bg-blue-600 text-white rounded-xl px-4 py-2 font-medium"
+              >
                 Dodaj
               </button>
             </div>
           </div>
         )}
 
-        {/* Lista — klikni za edit */}
+        {/* Lista zadnjih skenova */}
         {recentScans.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-50">
               <p className="text-sm font-medium text-gray-600">
-                Zadnje skenirani <span className="text-xs text-gray-400">(klikni za ispravak)</span>
+                Zadnje skenirani{' '}
+                <span className="text-xs text-gray-400">(klikni za ispravak)</span>
               </p>
             </div>
             {recentScans.map((s, i) => {
@@ -427,17 +454,23 @@ export default function SkenirajPage() {
               return (
                 <div
                   key={s.product_id}
-                  onClick={() => openEdit(s)}
-                  className={`flex justify-between items-center px-4 py-3 cursor-pointer active:bg-gray-50 ${i !== recentScans.length - 1 ? 'border-b border-gray-50' : ''}`}
+                  onClick={() => openEditModal(s)}
+                  className={`flex justify-between items-center px-4 py-3 cursor-pointer active:bg-gray-50 ${
+                    i !== recentScans.length - 1 ? 'border-b border-gray-50' : ''
+                  }`}
                 >
                   <div>
                     <p className="text-sm font-medium text-gray-800">{s.name}</p>
                     <p className="text-xs text-gray-400">{s.code}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-lg font-bold text-gray-700">{s.qty} <span className="text-xs">✏️</span></p>
+                    <p className="text-lg font-bold text-gray-700">
+                      {s.qty} <span className="text-xs">✏️</span>
+                    </p>
                     {diff !== null && (
-                      <p className={`text-xs font-medium ${diff === 0 ? 'text-green-500' : diff > 0 ? 'text-orange-500' : 'text-red-500'}`}>
+                      <p className={`text-xs font-medium ${
+                        diff === 0 ? 'text-green-500' : diff > 0 ? 'text-orange-500' : 'text-red-500'
+                      }`}>
                         {diff > 0 ? '+' : ''}{diff}
                       </p>
                     )}
@@ -450,30 +483,36 @@ export default function SkenirajPage() {
 
       </div>
 
-      {/* Edit modal */}
+      {/* Edit modal iz liste */}
       {editingItem && (
-        <div className="fixed inset-0 bg-black/50 flex items-end z-50" onClick={() => setEditingItem(null)}>
-          <div className="bg-white w-full rounded-t-3xl p-6" onClick={e => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 bg-black/50 flex items-end z-50"
+          onClick={() => setEditingItem(null)}
+        >
+          <div
+            className="bg-white w-full rounded-t-3xl p-6"
+            onClick={e => e.stopPropagation()}
+          >
             <p className="text-xs text-gray-400 mb-1">Ispravak količine</p>
             <p className="font-semibold text-gray-800 text-lg mb-1">{editingItem.name}</p>
             <p className="text-sm text-gray-400 mb-4">Šifra: {editingItem.code}</p>
 
             <div className="flex items-center gap-4 mb-6">
               <button
-                onClick={() => setEditQty(q => Math.max(0, q - 1))}
+                onClick={() => setEditingItemQty(q => Math.max(0, q - 1))}
                 className="w-14 h-14 bg-gray-100 rounded-2xl text-2xl font-bold text-gray-600"
               >
                 −
               </button>
               <input
                 type="number"
-                value={editQty}
-                onChange={e => setEditQty(Number(e.target.value))}
+                value={editingItemQty}
+                onChange={e => setEditingItemQty(Number(e.target.value))}
                 className="flex-1 border-2 border-blue-200 rounded-2xl px-4 py-3 text-center text-3xl font-bold text-blue-700"
                 min={0}
               />
               <button
-                onClick={() => setEditQty(q => q + 1)}
+                onClick={() => setEditingItemQty(q => q + 1)}
                 className="w-14 h-14 bg-gray-100 rounded-2xl text-2xl font-bold text-gray-600"
               >
                 +
@@ -488,7 +527,7 @@ export default function SkenirajPage() {
                 Odustani
               </button>
               <button
-                onClick={saveEdit}
+                onClick={saveEditModal}
                 className="flex-1 bg-blue-600 text-white rounded-2xl py-4 font-medium"
               >
                 Spremi
