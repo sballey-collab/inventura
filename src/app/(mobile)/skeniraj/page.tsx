@@ -18,9 +18,12 @@ export default function SkenirajPage() {
   const [messageType, setMessageType] = useState<'ok' | 'error'>('ok')
   const [userId, setUserId] = useState<string>('')
   const [recentScans, setRecentScans] = useState<any[]>([])
-  const [editQty, setEditQty] = useState<number | null>(null)
+  const [editingItem, setEditingItem] = useState<any | null>(null)
+  const [editQty, setEditQty] = useState<number>(0)
   const videoRef = useRef<HTMLVideoElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
+  const lastBarcodeRef = useRef<string>('')
+  const lastScanTimeRef = useRef<number>(0)
   const supabase = createClient()
 
   useEffect(() => {
@@ -64,7 +67,18 @@ export default function SkenirajPage() {
       stream.getTracks().forEach(t => t.stop())
 
       await reader.decodeFromVideoDevice(deviceId, videoRef.current!, async (result) => {
-        if (result) await processBarcode(result.getText())
+        if (!result) return
+
+        const barcode = result.getText()
+        const now = Date.now()
+
+        // Debounce: isti barkod unutar 2 sekunde se ignorira
+        if (barcode === lastBarcodeRef.current && now - lastScanTimeRef.current < 2000) return
+
+        lastBarcodeRef.current = barcode
+        lastScanTimeRef.current = now
+
+        await processBarcode(barcode)
       })
     } catch (err: any) {
       if (err?.name === 'NotAllowedError') {
@@ -85,8 +99,6 @@ export default function SkenirajPage() {
   }
 
   async function processBarcode(barcode: string) {
-    stopScanner() // stani odmah nakon prvog skena
-
     const { data: product } = await supabase
       .from('products')
       .select('*')
@@ -157,8 +169,7 @@ export default function SkenirajPage() {
     setLastProduct(product)
     setLastQty(counted)
     setLastBbm(bbm)
-    setEditQty(null)
-    showMessage(`✓ ${product.name}`, 'ok')
+    showMessage(`✓ ${product.name} → ${counted} kom`, 'ok')
 
     setRecentScans(prev => {
       const filtered = prev.filter(s => s.product_id !== product.id)
@@ -172,25 +183,45 @@ export default function SkenirajPage() {
     })
   }
 
-  async function saveEditQty() {
-    if (editQty === null || editQty === lastQty || !lastProduct || !selectedSession) return
-    const delta = editQty - lastQty
+  function openEdit(item: any) {
+    setEditingItem(item)
+    setEditQty(item.qty)
+  }
+
+  async function saveEdit() {
+    if (!editingItem || !selectedSession) return
+
+    // Direktno postavi na novu količinu (ne increment nego set)
+    // Koristimo increment_count s delta = nova - stara
+    const delta = editQty - editingItem.qty
+
+    if (delta === 0) {
+      setEditingItem(null)
+      return
+    }
+
     const { error } = await supabase.rpc('increment_count', {
       p_session_id: selectedSession.id,
-      p_product_id: lastProduct.id,
+      p_product_id: editingItem.product_id,
       p_user_id: userId,
       p_delta: delta,
     })
+
     if (error) {
       showMessage('Greška pri ispravku', 'error')
       return
     }
-    setLastQty(editQty)
+
     setRecentScans(prev => prev.map(s =>
-      s.product_id === lastProduct.id ? { ...s, qty: editQty } : s
+      s.product_id === editingItem.product_id ? { ...s, qty: editQty } : s
     ))
-    setEditQty(null)
-    showMessage('Količina ispravljena', 'ok')
+
+    if (lastProduct?.id === editingItem.product_id) {
+      setLastQty(editQty)
+    }
+
+    showMessage(`Ispravak spremljem: ${editingItem.name} → ${editQty} kom`, 'ok')
+    setEditingItem(null)
   }
 
   function showMessage(msg: string, type: 'ok' | 'error') {
@@ -222,6 +253,7 @@ export default function SkenirajPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+
       {/* Header */}
       <div className="bg-blue-600 px-4 py-3 flex justify-between items-center">
         <div>
@@ -269,7 +301,7 @@ export default function SkenirajPage() {
           <div className="bg-white rounded-2xl p-4 border border-gray-100">
             {scanning ? (
               <div className="space-y-3">
-                <video ref={videoRef} className="w-full rounded-xl" style={{ height: 200, objectFit: 'cover' }} />
+                <video ref={videoRef} className="w-full rounded-xl" style={{ height: 220, objectFit: 'cover' }} />
                 <button onClick={stopScanner} className="w-full bg-red-500 text-white rounded-xl py-3 font-medium">
                   ⏹ Zaustavi kameru
                 </button>
@@ -293,14 +325,13 @@ export default function SkenirajPage() {
           </div>
         )}
 
-        {/* Zadnji artikl — prikaže se nakon skena, kamera je stala */}
+        {/* Zadnje skenirano */}
         {lastProduct && selectedSession && (
           <div className="bg-white rounded-2xl p-4 border border-gray-100">
             <p className="text-xs text-gray-400 mb-1">Zadnje skenirano</p>
             <p className="font-semibold text-gray-800 text-lg">{lastProduct.name}</p>
             <p className="text-sm text-gray-400 mb-3">Šifra: {lastProduct.code}</p>
-
-            <div className="grid grid-cols-3 gap-2 mb-2">
+            <div className="grid grid-cols-3 gap-2">
               <div className="bg-blue-50 rounded-xl p-3 text-center">
                 <p className="text-xs text-blue-400 mb-1">Brojano</p>
                 <p className="text-2xl font-bold text-blue-700">{lastQty}</p>
@@ -316,45 +347,16 @@ export default function SkenirajPage() {
                 </p>
               </div>
             </div>
-
-            <div className={`mb-4 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
+            <div className={`mt-2 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
               {diffLabel(lastQty, lastBbm)}
             </div>
-
-            {/* Ispravi količinu */}
-            <div className="border-t border-gray-100 pt-3 mb-3">
-              <p className="text-xs text-gray-400 mb-2">Ispravi količinu</p>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  value={editQty ?? lastQty}
-                  onChange={e => setEditQty(Number(e.target.value))}
-                  className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-gray-800 text-center text-lg font-bold"
-                  min={0}
-                />
-                <button
-                  onClick={saveEditQty}
-                  className="bg-blue-600 text-white rounded-xl px-4 py-2 font-medium"
-                >
-                  Spremi
-                </button>
-              </div>
-            </div>
-
-            {/* Skeniraj sljedeći */}
-            <button
-              onClick={startScanner}
-              className="w-full bg-green-500 text-white rounded-xl py-3 font-medium"
-            >
-              📷 Skeniraj sljedeći
-            </button>
           </div>
         )}
 
         {/* Ručni unos */}
         {selectedSession && (
           <div className="bg-white rounded-2xl p-4 border border-gray-100">
-            <label className="block text-sm font-medium text-gray-600 mb-2">Ručni unos</label>
+            <label className="block text-sm font-medium text-gray-600 mb-2">Ručni unos šifre</label>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -378,22 +380,26 @@ export default function SkenirajPage() {
           </div>
         )}
 
-        {/* Lista zadnjih skenova */}
+        {/* Lista zadnjih skenova — klikni za edit */}
         {recentScans.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-50">
-              <p className="text-sm font-medium text-gray-600">Zadnje skenirani</p>
+              <p className="text-sm font-medium text-gray-600">Zadnje skenirani <span className="text-xs text-gray-400">(klikni za ispravak)</span></p>
             </div>
             {recentScans.map((s, i) => {
               const diff = s.bbm !== null ? s.qty - s.bbm : null
               return (
-                <div key={s.product_id} className={`flex justify-between items-center px-4 py-3 ${i !== recentScans.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                <div
+                  key={s.product_id}
+                  onClick={() => openEdit(s)}
+                  className={`flex justify-between items-center px-4 py-3 active:bg-gray-50 cursor-pointer ${i !== recentScans.length - 1 ? 'border-b border-gray-50' : ''}`}
+                >
                   <div>
                     <p className="text-sm font-medium text-gray-800">{s.name}</p>
                     <p className="text-xs text-gray-400">{s.code}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-lg font-bold text-gray-700">{s.qty}</p>
+                    <p className="text-lg font-bold text-gray-700">{s.qty} <span className="text-xs text-gray-400">✏️</span></p>
                     {diff !== null && (
                       <p className={`text-xs font-medium ${diff === 0 ? 'text-green-500' : diff > 0 ? 'text-orange-500' : 'text-red-500'}`}>
                         {diff > 0 ? '+' : ''}{diff}
@@ -407,6 +413,55 @@ export default function SkenirajPage() {
         )}
 
       </div>
+
+      {/* Edit modal */}
+      {editingItem && (
+        <div className="fixed inset-0 bg-black/50 flex items-end z-50" onClick={() => setEditingItem(null)}>
+          <div className="bg-white w-full rounded-t-3xl p-6" onClick={e => e.stopPropagation()}>
+            <p className="text-xs text-gray-400 mb-1">Ispravak količine</p>
+            <p className="font-semibold text-gray-800 text-lg mb-1">{editingItem.name}</p>
+            <p className="text-sm text-gray-400 mb-4">Šifra: {editingItem.code}</p>
+
+            <div className="flex items-center gap-4 mb-6">
+              <button
+                onClick={() => setEditQty(q => Math.max(0, q - 1))}
+                className="w-14 h-14 bg-gray-100 rounded-2xl text-2xl font-bold text-gray-600 flex items-center justify-center"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                value={editQty}
+                onChange={e => setEditQty(Number(e.target.value))}
+                className="flex-1 border-2 border-blue-200 rounded-2xl px-4 py-3 text-center text-3xl font-bold text-blue-700"
+                min={0}
+              />
+              <button
+                onClick={() => setEditQty(q => q + 1)}
+                className="w-14 h-14 bg-gray-100 rounded-2xl text-2xl font-bold text-gray-600 flex items-center justify-center"
+              >
+                +
+              </button>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setEditingItem(null)}
+                className="flex-1 bg-gray-100 text-gray-600 rounded-2xl py-4 font-medium"
+              >
+                Odustani
+              </button>
+              <button
+                onClick={saveEdit}
+                className="flex-1 bg-blue-600 text-white rounded-2xl py-4 font-medium"
+              >
+                Spremi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
