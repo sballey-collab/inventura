@@ -22,8 +22,6 @@ export default function SkenirajPage() {
   const [editQty, setEditQty] = useState<number>(0)
   const videoRef = useRef<HTMLVideoElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
-  const lastBarcodeRef = useRef<string>('')
-  const lastScanTimeRef = useRef<number>(0)
   const supabase = createClient()
 
   useEffect(() => {
@@ -67,18 +65,10 @@ export default function SkenirajPage() {
       stream.getTracks().forEach(t => t.stop())
 
       await reader.decodeFromVideoDevice(deviceId, videoRef.current!, async (result) => {
-        if (!result) return
-
-        const barcode = result.getText()
-        const now = Date.now()
-
-        // Debounce: isti barkod unutar 2 sekunde se ignorira
-        if (barcode === lastBarcodeRef.current && now - lastScanTimeRef.current < 2000) return
-
-        lastBarcodeRef.current = barcode
-        lastScanTimeRef.current = now
-
-        await processBarcode(barcode)
+        if (result) {
+          stopScanner() // odmah stani
+          await processBarcode(result.getText())
+        }
       })
     } catch (err: any) {
       if (err?.name === 'NotAllowedError') {
@@ -190,11 +180,7 @@ export default function SkenirajPage() {
 
   async function saveEdit() {
     if (!editingItem || !selectedSession) return
-
-    // Direktno postavi na novu količinu (ne increment nego set)
-    // Koristimo increment_count s delta = nova - stara
     const delta = editQty - editingItem.qty
-
     if (delta === 0) {
       setEditingItem(null)
       return
@@ -220,7 +206,7 @@ export default function SkenirajPage() {
       setLastQty(editQty)
     }
 
-    showMessage(`Ispravak spremljem: ${editingItem.name} → ${editQty} kom`, 'ok')
+    showMessage(`Ispravljeno: ${editingItem.name} → ${editQty} kom`, 'ok')
     setEditingItem(null)
   }
 
@@ -296,19 +282,19 @@ export default function SkenirajPage() {
           </div>
         )}
 
-        {/* Kamera */}
+        {/* Kamera / Skeniraj gumb */}
         {selectedSession && (
           <div className="bg-white rounded-2xl p-4 border border-gray-100">
             {scanning ? (
               <div className="space-y-3">
                 <video ref={videoRef} className="w-full rounded-xl" style={{ height: 220, objectFit: 'cover' }} />
                 <button onClick={stopScanner} className="w-full bg-red-500 text-white rounded-xl py-3 font-medium">
-                  ⏹ Zaustavi kameru
+                  ⏹ Odustani
                 </button>
               </div>
             ) : (
-              <button onClick={startScanner} className="w-full bg-blue-600 text-white rounded-xl py-4 text-lg font-medium">
-                📷 Počni skenirati
+              <button onClick={startScanner} className="w-full bg-blue-600 text-white rounded-xl py-5 text-xl font-bold">
+                📷 Skeniraj
               </button>
             )}
           </div>
@@ -325,13 +311,14 @@ export default function SkenirajPage() {
           </div>
         )}
 
-        {/* Zadnje skenirano */}
-        {lastProduct && selectedSession && (
+        {/* Zadnje skenirano + Skeniraj sljedeći */}
+        {lastProduct && selectedSession && !scanning && (
           <div className="bg-white rounded-2xl p-4 border border-gray-100">
             <p className="text-xs text-gray-400 mb-1">Zadnje skenirano</p>
             <p className="font-semibold text-gray-800 text-lg">{lastProduct.name}</p>
             <p className="text-sm text-gray-400 mb-3">Šifra: {lastProduct.code}</p>
-            <div className="grid grid-cols-3 gap-2">
+
+            <div className="grid grid-cols-3 gap-2 mb-2">
               <div className="bg-blue-50 rounded-xl p-3 text-center">
                 <p className="text-xs text-blue-400 mb-1">Brojano</p>
                 <p className="text-2xl font-bold text-blue-700">{lastQty}</p>
@@ -347,9 +334,17 @@ export default function SkenirajPage() {
                 </p>
               </div>
             </div>
-            <div className={`mt-2 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
+
+            <div className={`mb-4 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
               {diffLabel(lastQty, lastBbm)}
             </div>
+
+            <button
+              onClick={startScanner}
+              className="w-full bg-green-500 text-white rounded-xl py-4 text-lg font-bold"
+            >
+              📷 Skeniraj sljedeći
+            </button>
           </div>
         )}
 
@@ -380,11 +375,13 @@ export default function SkenirajPage() {
           </div>
         )}
 
-        {/* Lista zadnjih skenova — klikni za edit */}
+        {/* Lista — klikni za edit */}
         {recentScans.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-50">
-              <p className="text-sm font-medium text-gray-600">Zadnje skenirani <span className="text-xs text-gray-400">(klikni za ispravak)</span></p>
+              <p className="text-sm font-medium text-gray-600">
+                Zadnje skenirani <span className="text-xs text-gray-400">(klikni za ispravak)</span>
+              </p>
             </div>
             {recentScans.map((s, i) => {
               const diff = s.bbm !== null ? s.qty - s.bbm : null
@@ -392,14 +389,14 @@ export default function SkenirajPage() {
                 <div
                   key={s.product_id}
                   onClick={() => openEdit(s)}
-                  className={`flex justify-between items-center px-4 py-3 active:bg-gray-50 cursor-pointer ${i !== recentScans.length - 1 ? 'border-b border-gray-50' : ''}`}
+                  className={`flex justify-between items-center px-4 py-3 cursor-pointer active:bg-gray-50 ${i !== recentScans.length - 1 ? 'border-b border-gray-50' : ''}`}
                 >
                   <div>
                     <p className="text-sm font-medium text-gray-800">{s.name}</p>
                     <p className="text-xs text-gray-400">{s.code}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-lg font-bold text-gray-700">{s.qty} <span className="text-xs text-gray-400">✏️</span></p>
+                    <p className="text-lg font-bold text-gray-700">{s.qty} <span className="text-xs">✏️</span></p>
                     {diff !== null && (
                       <p className={`text-xs font-medium ${diff === 0 ? 'text-green-500' : diff > 0 ? 'text-orange-500' : 'text-red-500'}`}>
                         {diff > 0 ? '+' : ''}{diff}
@@ -425,7 +422,7 @@ export default function SkenirajPage() {
             <div className="flex items-center gap-4 mb-6">
               <button
                 onClick={() => setEditQty(q => Math.max(0, q - 1))}
-                className="w-14 h-14 bg-gray-100 rounded-2xl text-2xl font-bold text-gray-600 flex items-center justify-center"
+                className="w-14 h-14 bg-gray-100 rounded-2xl text-2xl font-bold text-gray-600"
               >
                 −
               </button>
@@ -438,7 +435,7 @@ export default function SkenirajPage() {
               />
               <button
                 onClick={() => setEditQty(q => q + 1)}
-                className="w-14 h-14 bg-gray-100 rounded-2xl text-2xl font-bold text-gray-600 flex items-center justify-center"
+                className="w-14 h-14 bg-gray-100 rounded-2xl text-2xl font-bold text-gray-600"
               >
                 +
               </button>
