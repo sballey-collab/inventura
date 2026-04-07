@@ -19,7 +19,7 @@ export default function SkenirajPage() {
   const [userId, setUserId] = useState<string>('')
   const [recentScans, setRecentScans] = useState<any[]>([])
   const [editingItem, setEditingItem] = useState<any | null>(null)
-  const [editQty, setEditQty] = useState<number>(0)
+  const [editQty, setEditQty] = useState<number | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
   const supabase = createClient()
@@ -334,9 +334,45 @@ export default function SkenirajPage() {
                 </p>
               </div>
             </div>
-
-            <div className={`mb-4 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
+<div className={`mb-4 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
               {diffLabel(lastQty, lastBbm)}
+            </div>
+
+            {/* Edit količine — inline, odmah ispod */}
+            <div className="border-t border-gray-100 pt-3 mb-3">
+              <label className="block text-sm font-medium text-gray-600 mb-2">Ispravi brojano</label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={editQty ?? lastQty}
+                  onChange={e => setEditQty(Number(e.target.value))}
+                  onFocus={() => { if (editQty === null) setEditQty(lastQty) }}
+                  className="w-24 border border-gray-200 rounded-xl px-3 py-2 text-gray-800 text-center text-lg font-bold"
+                  min={0}
+                />
+                <button
+                  onClick={async () => {
+                    if (editQty === null || editQty === lastQty || !lastProduct || !selectedSession) return
+                    const delta = editQty - lastQty
+                    const { error } = await supabase.rpc('increment_count', {
+                      p_session_id: selectedSession.id,
+                      p_product_id: lastProduct.id,
+                      p_user_id: userId,
+                      p_delta: delta,
+                    })
+                    if (error) { showMessage('Greška pri ispravku', 'error'); return }
+                    setLastQty(editQty)
+                    setRecentScans(prev => prev.map(s =>
+                      s.product_id === lastProduct.id ? { ...s, qty: editQty } : s
+                    ))
+                    setEditQty(null)
+                    showMessage('Količina ispravljena', 'ok')
+                  }}
+                  className="flex-1 bg-blue-600 text-white rounded-xl px-4 py-2 font-medium"
+                >
+                  Spremi ispravak
+                </button>
+              </div>
             </div>
 
             <button
