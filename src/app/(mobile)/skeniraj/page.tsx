@@ -275,9 +275,10 @@ const delta = parsed - lastQty
               {selectedSession.name} · {(selectedSession.warehouses as any)?.name}
             </p>
           )}
-        </div>
-        <button onClick={handleLogout} className="text-blue-100 text-sm">Odjava</button>
-      </div>
+        <div className="flex gap-3 items-center">
+  <a href="/dashboard" className="text-blue-100 text-sm">Dashboard</a>
+  <button onClick={handleLogout} className="text-blue-100 text-sm">Odjava</button>
+</div>
 
       <div className="p-4 space-y-4">
 
