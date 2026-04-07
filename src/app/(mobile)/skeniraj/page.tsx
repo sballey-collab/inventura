@@ -201,7 +201,7 @@ const delta = parsed - lastQty
 
     if (error) { showMessage('Greška pri ispravku', 'error'); return }
 
-    setLastQty(editQty)
+    setLastQty(parsed)
     setRecentScans(prev => prev.map(s =>
       s.product_id === lastProduct.id ? { ...s, qty: editQty } : s
     ))
@@ -275,13 +275,12 @@ const delta = parsed - lastQty
               {selectedSession.name} · {(selectedSession.warehouses as any)?.name}
             </p>
           )}
-        <div className="flex gap-3 items-center">
-  <a href="/dashboard" className="text-blue-100 text-sm">Dashboard</a>
-  <div className="flex gap-3 items-center">
-  <a href="/dashboard" className="text-blue-100 text-sm">Dashboard</a>
-  <button onClick={handleLogout} className="text-blue-100 text-sm">Odjava</button>
-</div>
-</div>
+           </div>
+ <div className="flex gap-3 items-center">
+          <a href="/dashboard" className="text-blue-100 text-sm">Dashboard</a>
+          <button onClick={handleLogout} className="text-blue-100 text-sm">Odjava</button>
+        </div>
+      </div>
 
       <div className="p-4 space-y-4">
 
