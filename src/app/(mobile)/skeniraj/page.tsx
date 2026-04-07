@@ -172,7 +172,7 @@ export default function SkenirajPage() {
     setLastProduct(product)
     setLastQty(counted)
     setLastBbm(bbm)
-    setEditQty(null)
+    setEditQty('')
     showMessage(`✓ ${product.name} → ${counted} kom`, 'ok')
 
     setRecentScans(prev => {
@@ -384,9 +384,10 @@ const delta = parsed - lastQty
               <label className="block text-sm font-medium text-gray-600 mb-2">Ispravi brojano</label>
               <div className="flex gap-2">
                 <input
-                  type="number"
-                  value={editQty === '' ? lastQty : editQty}
-onChange={e => setEditQty(e.target.value)}
+                type="text"
+inputMode="numeric"
+value={editQty === '' ? String(lastQty) : editQty}
+onChange={e => setEditQty(e.target.value.replace(/[^0-9]/g, ''))}
 onFocus={() => setEditQty(String(lastQty))}
                   className="w-24 border border-gray-200 rounded-xl px-3 py-2 text-gray-800 text-center text-lg font-bold"
                   min={0}
