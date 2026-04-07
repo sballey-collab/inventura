@@ -19,7 +19,7 @@ export default function SkenirajPage() {
   const [userId, setUserId] = useState<string>('')
   const [recentScans, setRecentScans] = useState<any[]>([])
   const [editingItem, setEditingItem] = useState<any | null>(null)
-  const [editQty, setEditQty] = useState<number | null>(null)
+  const [editQty, setEditQty] = useState<number>(0)
   const videoRef = useRef<HTMLVideoElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
   const supabase = createClient()
@@ -334,7 +334,8 @@ export default function SkenirajPage() {
                 </p>
               </div>
             </div>
-<div className={`mb-4 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
+
+           <div className={`mb-4 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
               {diffLabel(lastQty, lastBbm)}
             </div>
 
