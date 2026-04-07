@@ -29,7 +29,11 @@ export default function SkenirajPage() {
 
   async function loadData() {
     const { data: { user } } = await supabase.auth.getUser()
-    if (user) setUserId(user.id)
+    if (!user) {
+      window.location.href = '/login'
+      return
+    }
+    setUserId(user.id)
 
     const { data } = await supabase
       .from('inventory_sessions')
@@ -51,11 +55,23 @@ export default function SkenirajPage() {
     readerRef.current = reader
 
     try {
-      await reader.decodeFromVideoDevice(undefined, videoRef.current!, async (result) => {
+      // Eksplicitno traži stražnju kameru
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } }
+      })
+      const track = stream.getVideoTracks()[0]
+      const deviceId = track.getSettings().deviceId
+      stream.getTracks().forEach(t => t.stop()) // odmah zatvori, zxing će otvoriti svoju
+
+      await reader.decodeFromVideoDevice(deviceId, videoRef.current!, async (result) => {
         if (result) await processBarcode(result.getText())
       })
-    } catch {
-      showMessage('Kamera nije dostupna', 'error')
+    } catch (err: any) {
+      if (err?.name === 'NotAllowedError') {
+        showMessage('Dozvoli pristup kameri u postavkama browsera', 'error')
+      } else {
+        showMessage('Kamera nije dostupna', 'error')
+      }
       setScanning(false)
     }
   }
