@@ -18,6 +18,7 @@ export default function SkenirajPage() {
   const [messageType, setMessageType] = useState<'ok' | 'error'>('ok')
   const [userId, setUserId] = useState<string>('')
   const [recentScans, setRecentScans] = useState<any[]>([])
+  const [editQty, setEditQty] = useState<number | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
   const supabase = createClient()
@@ -55,13 +56,12 @@ export default function SkenirajPage() {
     readerRef.current = reader
 
     try {
-      // Eksplicitno traži stražnju kameru
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' } }
       })
       const track = stream.getVideoTracks()[0]
       const deviceId = track.getSettings().deviceId
-      stream.getTracks().forEach(t => t.stop()) // odmah zatvori, zxing će otvoriti svoju
+      stream.getTracks().forEach(t => t.stop())
 
       await reader.decodeFromVideoDevice(deviceId, videoRef.current!, async (result) => {
         if (result) await processBarcode(result.getText())
@@ -85,6 +85,8 @@ export default function SkenirajPage() {
   }
 
   async function processBarcode(barcode: string) {
+    stopScanner() // stani odmah nakon prvog skena
+
     const { data: product } = await supabase
       .from('products')
       .select('*')
@@ -135,7 +137,6 @@ export default function SkenirajPage() {
       return
     }
 
-    // Dohvati brojano stanje
     const { data: count } = await supabase
       .from('inventory_counts')
       .select('counted_quantity')
@@ -143,7 +144,6 @@ export default function SkenirajPage() {
       .eq('product_id', product.id)
       .single()
 
-    // Dohvati BBM stanje za ovo skladište
     const { data: bbmStock } = await supabase
       .from('bbm_stock')
       .select('quantity')
@@ -157,6 +157,7 @@ export default function SkenirajPage() {
     setLastProduct(product)
     setLastQty(counted)
     setLastBbm(bbm)
+    setEditQty(null)
     showMessage(`✓ ${product.name}`, 'ok')
 
     setRecentScans(prev => {
@@ -171,17 +172,25 @@ export default function SkenirajPage() {
     })
   }
 
-  async function undoLast() {
-    if (!lastProduct || !selectedSession) return
-    await supabase.rpc('increment_count', {
+  async function saveEditQty() {
+    if (editQty === null || editQty === lastQty || !lastProduct || !selectedSession) return
+    const delta = editQty - lastQty
+    const { error } = await supabase.rpc('increment_count', {
       p_session_id: selectedSession.id,
       p_product_id: lastProduct.id,
       p_user_id: userId,
-      p_delta: -1,
+      p_delta: delta,
     })
-    showMessage(`Poništeno: ${lastProduct.name}`, 'ok')
-    setLastProduct(null)
-    setLastBbm(null)
+    if (error) {
+      showMessage('Greška pri ispravku', 'error')
+      return
+    }
+    setLastQty(editQty)
+    setRecentScans(prev => prev.map(s =>
+      s.product_id === lastProduct.id ? { ...s, qty: editQty } : s
+    ))
+    setEditQty(null)
+    showMessage('Količina ispravljena', 'ok')
   }
 
   function showMessage(msg: string, type: 'ok' | 'error') {
@@ -225,6 +234,7 @@ export default function SkenirajPage() {
       </div>
 
       <div className="p-4 space-y-4">
+
         {/* Odabir sesije */}
         {sessions.length > 1 && (
           <div className="bg-white rounded-2xl p-4 border border-gray-100">
@@ -260,22 +270,84 @@ export default function SkenirajPage() {
             {scanning ? (
               <div className="space-y-3">
                 <video ref={videoRef} className="w-full rounded-xl" style={{ height: 200, objectFit: 'cover' }} />
-                <div className="flex gap-2">
-                  <button onClick={stopScanner} className="flex-1 bg-red-500 text-white rounded-xl py-3 font-medium">
-                    ⏹ Zaustavi kameru
-                  </button>
-                  {lastProduct && (
-                    <button onClick={undoLast} className="bg-gray-100 text-gray-600 rounded-xl px-4 py-3 font-medium">
-                      ↩ Poništi
-                    </button>
-                  )}
-                </div>
+                <button onClick={stopScanner} className="w-full bg-red-500 text-white rounded-xl py-3 font-medium">
+                  ⏹ Zaustavi kameru
+                </button>
               </div>
             ) : (
               <button onClick={startScanner} className="w-full bg-blue-600 text-white rounded-xl py-4 text-lg font-medium">
                 📷 Počni skenirati
               </button>
             )}
+          </div>
+        )}
+
+        {/* Poruka */}
+        {message && (
+          <div className={`rounded-2xl px-4 py-3 text-sm font-medium ${
+            messageType === 'ok'
+              ? 'bg-green-50 text-green-700 border border-green-100'
+              : 'bg-red-50 text-red-600 border border-red-100'
+          }`}>
+            {message}
+          </div>
+        )}
+
+        {/* Zadnji artikl — prikaže se nakon skena, kamera je stala */}
+        {lastProduct && selectedSession && (
+          <div className="bg-white rounded-2xl p-4 border border-gray-100">
+            <p className="text-xs text-gray-400 mb-1">Zadnje skenirano</p>
+            <p className="font-semibold text-gray-800 text-lg">{lastProduct.name}</p>
+            <p className="text-sm text-gray-400 mb-3">Šifra: {lastProduct.code}</p>
+
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              <div className="bg-blue-50 rounded-xl p-3 text-center">
+                <p className="text-xs text-blue-400 mb-1">Brojano</p>
+                <p className="text-2xl font-bold text-blue-700">{lastQty}</p>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3 text-center">
+                <p className="text-xs text-gray-400 mb-1">BBM</p>
+                <p className="text-2xl font-bold text-gray-600">{lastBbm ?? '—'}</p>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3 text-center">
+                <p className="text-xs text-gray-400 mb-1">Razlika</p>
+                <p className={`text-2xl font-bold ${diffColor(lastQty, lastBbm)}`}>
+                  {lastBbm !== null ? (lastQty - lastBbm > 0 ? '+' : '') + (lastQty - lastBbm) : '—'}
+                </p>
+              </div>
+            </div>
+
+            <div className={`mb-4 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
+              {diffLabel(lastQty, lastBbm)}
+            </div>
+
+            {/* Ispravi količinu */}
+            <div className="border-t border-gray-100 pt-3 mb-3">
+              <p className="text-xs text-gray-400 mb-2">Ispravi količinu</p>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={editQty ?? lastQty}
+                  onChange={e => setEditQty(Number(e.target.value))}
+                  className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-gray-800 text-center text-lg font-bold"
+                  min={0}
+                />
+                <button
+                  onClick={saveEditQty}
+                  className="bg-blue-600 text-white rounded-xl px-4 py-2 font-medium"
+                >
+                  Spremi
+                </button>
+              </div>
+            </div>
+
+            {/* Skeniraj sljedeći */}
+            <button
+              onClick={startScanner}
+              className="w-full bg-green-500 text-white rounded-xl py-3 font-medium"
+            >
+              📷 Skeniraj sljedeći
+            </button>
           </div>
         )}
 
@@ -302,47 +374,6 @@ export default function SkenirajPage() {
               <button onClick={handleManualInput} className="bg-blue-600 text-white rounded-xl px-4 py-2 font-medium">
                 Dodaj
               </button>
-            </div>
-          </div>
-        )}
-
-        {/* Poruka */}
-        {message && (
-          <div className={`rounded-2xl px-4 py-3 text-sm font-medium ${
-            messageType === 'ok'
-              ? 'bg-green-50 text-green-700 border border-green-100'
-              : 'bg-red-50 text-red-600 border border-red-100'
-          }`}>
-            {message}
-          </div>
-        )}
-
-        {/* Zadnji artikl s BBM usporedbom */}
-        {lastProduct && selectedSession && (
-          <div className="bg-white rounded-2xl p-4 border border-gray-100">
-            <p className="text-xs text-gray-400 mb-2">Zadnje skenirano</p>
-            <p className="font-semibold text-gray-800 text-lg">{lastProduct.name}</p>
-            <p className="text-sm text-gray-400 mb-3">Šifra: {lastProduct.code}</p>
-
-            <div className="grid grid-cols-3 gap-2">
-              <div className="bg-blue-50 rounded-xl p-3 text-center">
-                <p className="text-xs text-blue-400 mb-1">Brojano</p>
-                <p className="text-2xl font-bold text-blue-700">{lastQty}</p>
-              </div>
-              <div className="bg-gray-50 rounded-xl p-3 text-center">
-                <p className="text-xs text-gray-400 mb-1">BBM</p>
-                <p className="text-2xl font-bold text-gray-600">{lastBbm ?? '—'}</p>
-              </div>
-              <div className="bg-gray-50 rounded-xl p-3 text-center">
-                <p className="text-xs text-gray-400 mb-1">Razlika</p>
-                <p className={`text-2xl font-bold ${diffColor(lastQty, lastBbm)}`}>
-                  {lastBbm !== null ? (lastQty - lastBbm > 0 ? '+' : '') + (lastQty - lastBbm) : '—'}
-                </p>
-              </div>
-            </div>
-
-            <div className={`mt-2 text-center text-sm font-medium ${diffColor(lastQty, lastBbm)}`}>
-              {diffLabel(lastQty, lastBbm)}
             </div>
           </div>
         )}
@@ -374,6 +405,7 @@ export default function SkenirajPage() {
             })}
           </div>
         )}
+
       </div>
     </div>
   )
