@@ -18,7 +18,7 @@ export default function SkenirajPage() {
   const [messageType, setMessageType] = useState<'ok' | 'error'>('ok')
   const [userId, setUserId] = useState<string>('')
   const [recentScans, setRecentScans] = useState<any[]>([])
-  const [editQty, setEditQty] = useState<number | null>(null)
+  const [editQty, setEditQty] = useState<string>('')
   const [editingItem, setEditingItem] = useState<any | null>(null)
   const [editingItemQty, setEditingItemQty] = useState<number>(0)
 
@@ -188,8 +188,9 @@ export default function SkenirajPage() {
   }
 
   async function saveInlineEdit() {
-    if (editQty === null || editQty === lastQty || !lastProduct || !selectedSession) return
-    const delta = editQty - lastQty
+    const parsed = parseInt(editQty)
+if (isNaN(parsed) || parsed === lastQty || !lastProduct || !selectedSession) return
+const delta = parsed - lastQty
 
     const { error } = await supabase.rpc('increment_count', {
       p_session_id: selectedSession.id,
@@ -204,7 +205,7 @@ export default function SkenirajPage() {
     setRecentScans(prev => prev.map(s =>
       s.product_id === lastProduct.id ? { ...s, qty: editQty } : s
     ))
-    setEditQty(null)
+    setEditQty('')
     showMessage('Količina ispravljena', 'ok')
   }
 
@@ -384,8 +385,9 @@ export default function SkenirajPage() {
               <div className="flex gap-2">
                 <input
                   type="number"
-                  value={editQty ?? lastQty}
-                  onChange={e => setEditQty(Number(e.target.value))}
+                  value={editQty === '' ? lastQty : editQty}
+onChange={e => setEditQty(e.target.value)}
+onFocus={() => setEditQty(String(lastQty))}
                   className="w-24 border border-gray-200 rounded-xl px-3 py-2 text-gray-800 text-center text-lg font-bold"
                   min={0}
                 />
