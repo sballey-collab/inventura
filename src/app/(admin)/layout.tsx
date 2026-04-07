@@ -65,7 +65,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
       {/* Mobile header */}
       <div className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-gray-100">
-        <p className="text-lg font-semibold text-gray-800">📦 Inventura</p>
+        <p className="text-lg font-semibold text-gray-800">Inventura</p>
         <button
           onClick={() => setMenuOpen(!menuOpen)}
           className="p-2 rounded-lg text-gray-600 hover:bg-gray-100"
@@ -96,7 +96,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         {/* Desktop sidebar — skrivena na mobitelu */}
         <div className="hidden md:flex w-56 bg-white border-r border-gray-100 flex-col min-h-screen">
           <div className="p-5 border-b border-gray-100">
-            <p className="text-lg font-semibold text-gray-800">📦 Inventura</p>
+            <p className="text-lg font-semibold text-gray-800">Inventura</p>
             <p className="text-xs text-gray-400 mt-0.5">Admin panel</p>
           </div>
           <NavLinks />
