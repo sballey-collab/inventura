@@ -55,6 +55,7 @@ export default function SkenirajPage() {
     setScanning(true)
     const reader = new BrowserMultiFormatReader()
     readerRef.current = reader
+    const processed = { done: false } // lokalna zastavica
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -65,10 +66,11 @@ export default function SkenirajPage() {
       stream.getTracks().forEach(t => t.stop())
 
       await reader.decodeFromVideoDevice(deviceId, videoRef.current!, async (result) => {
-        if (result) {
-          stopScanner() // odmah stani
-          await processBarcode(result.getText())
-        }
+        if (!result) return
+        if (processed.done) return // ako je već obrađeno, ignoriraj
+        processed.done = true      // blokiraj sve daljnje okidače
+        stopScanner()
+        await processBarcode(result.getText())
       })
     } catch (err: any) {
       if (err?.name === 'NotAllowedError') {
