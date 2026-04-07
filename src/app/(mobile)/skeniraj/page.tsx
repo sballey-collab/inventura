@@ -277,7 +277,10 @@ const delta = parsed - lastQty
           )}
         <div className="flex gap-3 items-center">
   <a href="/dashboard" className="text-blue-100 text-sm">Dashboard</a>
+  <div className="flex gap-3 items-center">
+  <a href="/dashboard" className="text-blue-100 text-sm">Dashboard</a>
   <button onClick={handleLogout} className="text-blue-100 text-sm">Odjava</button>
+</div>
 </div>
 
       <div className="p-4 space-y-4">
