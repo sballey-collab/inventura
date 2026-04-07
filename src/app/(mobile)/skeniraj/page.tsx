@@ -24,8 +24,7 @@ export default function SkenirajPage() {
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
-  const isProcessingRef = useRef(false) // ključna zastavica
-
+  
   const supabase = createClient()
 
   useEffect(() => {
@@ -57,7 +56,6 @@ export default function SkenirajPage() {
       return
     }
 
-    isProcessingRef.current = false // uvijek resetiraj prije novog skena
     setScanning(true)
 
     const reader = new BrowserMultiFormatReader()
@@ -71,29 +69,27 @@ export default function SkenirajPage() {
       const deviceId = track.getSettings().deviceId
       stream.getTracks().forEach(t => t.stop())
 
-      await reader.decodeFromVideoDevice(deviceId, videoRef.current!, async (result) => {
-        if (!result) return
-        if (isProcessingRef.current) return // blokiraj duplikate
-        isProcessingRef.current = true
+      // Promise koji se razriješi JEDNOM i stane — nema callbacka, nema duplikata
+      const result = await reader.decodeOnceFromVideoDevice(deviceId, videoRef.current!)
 
-        const barcode = result.getText()
+      BrowserMultiFormatReader.releaseAllStreams()
+      readerRef.current = null
+      setScanning(false)
 
-        // cleanup NAKON što smo uzeli barcode
-        if (readerRef.current) {
-          BrowserMultiFormatReader.releaseAllStreams()
-          readerRef.current = null
-        }
-        setScanning(false)
+      if (result) await processBarcode(result.getText())
 
-        await processBarcode(barcode)
-      })
     } catch (err: any) {
+      BrowserMultiFormatReader.releaseAllStreams()
+      readerRef.current = null
+      setScanning(false)
+
       if (err?.name === 'NotAllowedError') {
         showMessage('Dozvoli pristup kameri u postavkama browsera', 'error')
+      } else if (err?.name === 'NotFoundException') {
+        // korisnik je kliknuo Odustani — tiho ignoriraj
       } else {
         showMessage('Kamera nije dostupna', 'error')
       }
-      setScanning(false)
     }
   }
 
