@@ -50,7 +50,7 @@ export default function SkenirajPage() {
     if (data && data.length === 1) setSelectedSession(data[0])
   }
 
- async function startScanner() {
+  async function startScanner() {
     if (!selectedSession) {
       showMessage('Odaberi sesiju prije skeniranja', 'error')
       return
@@ -69,7 +69,6 @@ export default function SkenirajPage() {
       const deviceId = track.getSettings().deviceId
       stream.getTracks().forEach(t => t.stop())
 
-      // Promise koji se razriješi JEDNOM i stane — nema callbacka, nema duplikata
       const result = await reader.decodeOnceFromVideoDevice(deviceId, videoRef.current!)
 
       BrowserMultiFormatReader.releaseAllStreams()
@@ -123,14 +122,17 @@ export default function SkenirajPage() {
       return
     }
 
+    // FIX 3: toUpperCase() da ne smeta veliko/malo slovo
+    const code = manualCode.trim().toUpperCase()
+
     const { data: product } = await supabase
       .from('products')
       .select('*')
-      .or(`code.eq.${manualCode},barcode.eq.${manualCode}`)
+      .or(`code.eq.${code},barcode.eq.${code}`)
       .single()
 
     if (!product) {
-      showMessage(`Artikl nije pronađen: ${manualCode}`, 'error')
+      showMessage(`Artikl nije pronađen: ${code}`, 'error')
       return
     }
 
@@ -189,8 +191,8 @@ export default function SkenirajPage() {
 
   async function saveInlineEdit() {
     const parsed = parseInt(editQty)
-if (isNaN(parsed) || parsed === lastQty || !lastProduct || !selectedSession) return
-const delta = parsed - lastQty
+    if (isNaN(parsed) || parsed === lastQty || !lastProduct || !selectedSession) return
+    const delta = parsed - lastQty
 
     const { error } = await supabase.rpc('increment_count', {
       p_session_id: selectedSession.id,
@@ -203,7 +205,7 @@ const delta = parsed - lastQty
 
     setLastQty(parsed)
     setRecentScans(prev => prev.map(s =>
-      s.product_id === lastProduct.id ? { ...s, qty: editQty } : s
+      s.product_id === lastProduct.id ? { ...s, qty: parsed } : s
     ))
     setEditQty('')
     showMessage('Količina ispravljena', 'ok')
@@ -264,7 +266,11 @@ const delta = parsed - lastQty
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    // FIX 2: overflow-hidden + touch-action sprječava scroll/zoom van sadržaja
+    <div
+      className="min-h-screen bg-gray-50"
+      style={{ touchAction: 'pan-y', overscrollBehavior: 'none' }}
+    >
 
       {/* Header */}
       <div className="bg-blue-600 px-4 py-3 flex justify-between items-center">
@@ -387,11 +393,15 @@ const delta = parsed - lastQty
               <label className="block text-sm font-medium text-gray-600 mb-2">Ispravi brojano</label>
               <div className="flex gap-2">
                 <input
-                type="text"
-inputMode="numeric"
-value={editQty === '' ? String(lastQty) : editQty}
-onChange={e => setEditQty(e.target.value.replace(/[^0-9]/g, ''))}
-onFocus={() => setEditQty(String(lastQty))}
+                  type="text"
+                  inputMode="numeric"
+                  value={editQty === '' ? String(lastQty) : editQty}
+                  onChange={e => setEditQty(e.target.value.replace(/[^0-9]/g, ''))}
+                  // FIX 4: selecta cijeli broj pri fokusu da možeš odmah upisati novi
+                  onFocus={e => {
+                    setEditQty(String(lastQty))
+                    setTimeout(() => e.target.select(), 0)
+                  }}
                   className="w-24 border border-gray-200 rounded-xl px-3 py-2 text-gray-800 text-center text-lg font-bold"
                   min={0}
                 />
@@ -415,28 +425,32 @@ onFocus={() => setEditQty(String(lastQty))}
         )}
 
         {/* Ručni unos */}
+        {/* FIX 1: gumb "Dodaj" u zasebnom redu da se uvijek vidi */}
         {selectedSession && (
           <div className="bg-white rounded-2xl p-4 border border-gray-100">
             <label className="block text-sm font-medium text-gray-600 mb-2">Ručni unos šifre</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={manualCode}
-                onChange={e => setManualCode(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleManualInput()}
-                className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-gray-800"
-                placeholder="Šifra artikla..."
-              />
-              <input
-                type="number"
-                value={manualQty}
-                onChange={e => setManualQty(Number(e.target.value))}
-                className="w-20 border border-gray-200 rounded-xl px-3 py-2 text-gray-800 text-center"
-                min={1}
-              />
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={manualCode}
+                  // FIX 3: automatski pretvara u velika slova
+                  onChange={e => setManualCode(e.target.value.toUpperCase())}
+                  onKeyDown={e => e.key === 'Enter' && handleManualInput()}
+                  className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-gray-800"
+                  placeholder="Šifra artikla..."
+                />
+                <input
+                  type="number"
+                  value={manualQty}
+                  onChange={e => setManualQty(Number(e.target.value))}
+                  className="w-20 border border-gray-200 rounded-xl px-3 py-2 text-gray-800 text-center"
+                  min={1}
+                />
+              </div>
               <button
                 onClick={handleManualInput}
-                className="bg-blue-600 text-white rounded-xl px-4 py-2 font-medium"
+                className="w-full bg-blue-600 text-white rounded-xl px-4 py-3 font-medium"
               >
                 Dodaj
               </button>
